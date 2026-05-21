@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>台北租屋 & 捷運出入口 & 超商地圖</title>
+    <title>台北租屋 & 捷運出入口地圖</title>
 
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
 
@@ -234,11 +234,11 @@
         <div id="map"></div>
         <div class="sidebar">
             <div class="sidebar-header">
-                <h1>🏠 台北租屋 & 捷運 & 超商地圖</h1>
+                <h1>🏠 台北租屋 & 捷運地圖</h1>
                 <p>載入多資料源中...</p>
             </div>
             <div class="rental-list" id="rentalList">
-                <div class="loading">📍 正在讀取三檔案資料...</div>
+                <div class="loading">📍 正在讀取雙檔案資料...</div>
             </div>
             <div class="stats">
                 <div>總共 <span id="totalCount">0</span> 筆租屋</div>
@@ -267,35 +267,13 @@
             'D': L.icon({ iconUrl: 'purple_icon.png', iconSize: [38, 62], iconAnchor: [12, 41], popupAnchor: [1, -34] })
         };
 
-        // 捷運自訂圖示
+        // 改動點：改用你本地端的捷運圖片（這裡假設命名為 mrt_logo.png，大小設為 24x24）
         const mrtLogoIcon = L.icon({
             iconUrl: 'Taipei_Metro_Logo.png',
             iconSize: [36, 36],
             iconAnchor: [18, 18],
             popupAnchor: [0, -18]
         });
-
-        // 新增：超商自訂圖示對照表
-        const storeIcons = {
-            '全聯實業股份有限公司': L.icon({
-                iconUrl: 'Free bear.png',
-                iconSize: [24, 24],
-                iconAnchor: [16, 16],
-                popupAnchor: [0, -16]
-            }),
-            '全家便利商店股份有限公司': L.icon({
-                iconUrl: 'Family Mart.png',
-                iconSize: [24, 24],
-                iconAnchor: [16, 16],
-                popupAnchor: [0, -16]
-            }),
-            '統一超商股份有限公司': L.icon({
-                iconUrl: 'Seven.png',
-                iconSize: [24, 24],
-                iconAnchor: [16, 16],
-                popupAnchor: [0, -16]
-            })
-        };
 
         // 預設防呆圖示
         const defaultIcon = L.icon({
@@ -307,10 +285,9 @@
 
         let rentals = [];
         let stations = [];
-        let stores = []; // 新增：用來存放超商資料的陣列
         let markers = {};
 
-        // 同時讀取三個 JSON 檔案
+        // 同時讀取兩個 JSON 檔案
         function loadAllData() {
             const fetchRentals = fetch('MRT_convenience_mix_score_full.json').then(res => {
                 if (!res.ok) throw new Error('無法讀取租屋檔案 (MRT_convenience_mix_score_full.json)');
@@ -322,27 +299,18 @@
                 return res.json();
             });
 
-            // 新增：讀取超商檔案
-            const fetchStores = fetch('geocode_conven_0516_arcgis.json').then(res => {
-                if (!res.ok) throw new Error('無法讀取超商檔案 (geocode_conven_0516_arcgis.json)');
-                return res.json();
-            });
-
-            Promise.all([fetchRentals, fetchStations, fetchStores])
-                .then(([rentalData, stationData, storeData]) => {
+            Promise.all([fetchRentals, fetchStations])
+                .then(([rentalData, stationData]) => {
                     rentals = rentalData;
                     stations = stationData;
-                    stores = storeData;
 
-                    // 偵錯日誌
+                    // 偵錯日誌：看看捷運資料到底抓到了幾筆
                     console.log('成功載入租屋資料：', rentals.length, '筆');
                     console.log('成功載入捷運原始資料：', stationData);
-                    console.log('成功載入超商原始資料：', stores.length, '筆');
 
-                    document.querySelector('.sidebar-header p').textContent = '地圖已標示房源機能、北捷出入口與生活超商';
+                    document.querySelector('.sidebar-header p').textContent = '地圖已標示房源機能與北捷出入口';
 
                     renderStations();
-                    renderStores(); // 新增：繪製超商標記
                     renderRentals();
                     updateStats();
                 })
@@ -352,22 +320,26 @@
                     listContainer.innerHTML = `
                         <div class="error">
                             ⚠️ <strong>資料載入失敗：</strong> ${error.message}<br><br>
-                            <strong>請確認：</strong>三個 JSON 檔案名稱是否正確，並與此 HTML 放在同一個資料夾。
+                            <strong>請確認：</strong>兩個 JSON 檔案名稱是否正確，並與此 HTML 放在同一個資料夾。
                         </div>
                     `;
                 });
         }
 
-        // 繪製捷運站出入口
+        // 繪製捷運站出入口 (已根據 [Lng, Lat] 陣列結構進行完美修正)
         function renderStations() {
+            // 因為資料結構是 { "站名": [Lng, Lat], ... }
+            // 我們直接使用 Object.entries() 同時把「Key (站名)」與「Value (經緯度陣列)」取出來
             let stationsEntries = [];
 
             if (stations && typeof stations === 'object' && !Array.isArray(stations)) {
+                // 如果外層多包了 data 或是 result 欄位，進行防呆轉換
                 if (stations.data && typeof stations.data === 'object' && !Array.isArray(stations.data)) {
                     stationsEntries = Object.entries(stations.data);
                 } else if (stations.result && typeof stations.result === 'object' && !Array.isArray(stations.result)) {
                     stationsEntries = Object.entries(stations.result);
                 } else {
+                    // 標準狀況：直接抓取物件的所有 [Key, Value] 組合
                     stationsEntries = Object.entries(stations);
                 }
             }
@@ -377,71 +349,39 @@
                 return;
             }
 
+            console.log('成功解鎖捷運站條目數量：', stationsEntries.length, '筆');
+
             let markerCount = 0;
 
+            // 開始巡迴處理每一組捷運站點資料
             stationsEntries.forEach(([stationTitle, coordArray]) => {
+                // 防呆：確保經緯度資料是一個陣列，且裡面至少有兩個元素
                 if (Array.isArray(coordArray) && coordArray.length >= 2) {
-                    const lng = parseFloat(coordArray[0]);
-                    const lat = parseFloat(coordArray[1]);
 
+                    // 非常重要：內建格式為 [經度, 緯度]
+                    const lng = parseFloat(coordArray[0]); // 陣列第 1 個是經度
+                    const lat = parseFloat(coordArray[1]); // 陣列第 2 個是緯度
+
+                    // 確保數值不是 NaN
                     if (!isNaN(lat) && !isNaN(lng)) {
+
+                        // 建立捷運點，Leaflet 的格式為 [緯度, 經度]
                         L.marker([lat, lng], {
                             title: stationTitle,
                             icon: mrtLogoIcon,
-                            zIndexOffset: 2000 // 設在較上層
+                            zIndexOffset: 2000 // 設得非常高，保證在最上層
                         }).addTo(map).bindPopup(`
                             <div class="popup-title">🚇 ${stationTitle}</div>
                             <div class="popup-info">台北捷運車站出入口</div>
                             <div class="popup-info" style="color: #888; font-size: 11px;">座標: ${lat.toFixed(5)}, ${lng.toFixed(5)}</div>
                         `);
+
                         markerCount++;
                     }
                 }
             });
-            console.log(`地圖成功繪製了 ${markerCount} 個捷運出入口標記！`);
-        }
 
-        // 新增：繪製超商標記的 function
-        function renderStores() {
-            if (!Array.isArray(stores)) {
-                console.warn('超商資料並非陣列結構，無法繪製。');
-                return;
-            }
-
-            let storeCount = 0;
-
-            stores.forEach((store) => {
-                const lat = parseFloat(store.latitude);
-                const lng = parseFloat(store.longitude);
-                const companyName = store['公司名稱'];
-                const storeName = store['分店名稱'] || store['場所名稱'] || '超商門市';
-                const address = store['地址'] || store['address'] || '未提供地址';
-
-                if (!isNaN(lat) && !isNaN(lng)) {
-                    // 根據公司名稱指派圖示，如果都不符合就用 defaultIcon
-                    const customIcon = storeIcons[companyName] || defaultIcon;
-
-                    // 縮減品牌名稱做為 Popup 標題前綴
-                    let brandEmoji = '🏪';
-                    if (companyName.includes('全聯')) brandEmoji = '🛒 [全聯]';
-                    if (companyName.includes('全家')) brandEmoji = '🏪 [全家]';
-                    if (companyName.includes('統一')) brandEmoji = '🏪 [7-11]';
-
-                    L.marker([lat, lng], {
-                        title: storeName,
-                        icon: customIcon,
-                        zIndexOffset: 1000 // 超商設在中圖層
-                    }).addTo(map).bindPopup(`
-                        <div class="popup-title">${brandEmoji} ${storeName}</div>
-                        <div class="popup-info">🏢 公司: ${companyName}</div>
-                        <div class="popup-info">📍 地址: ${address}</div>
-                    `);
-
-                    storeCount++;
-                }
-            });
-
-            console.log(`【超商解鎖】地圖成功繪製了 ${storeCount} 個超商門市標記！`);
+            console.log(`【大功告成】地圖這次成功繪製了 ${markerCount} 個捷運出入口標記！`);
         }
 
         // 繪製租屋點並渲染側邊欄
@@ -459,8 +399,7 @@
 
                 const marker = L.marker([latitude, longitude], {
                     title: title,
-                    icon: customIcon,
-                    zIndexOffset: 3000 // 租屋房源維持最上層
+                    icon: customIcon
                 }).addTo(map);
 
                 const popupContent = `
